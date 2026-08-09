@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"golang.zx2c4.com/wireguard/windows/driver"
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
+	"golang.zx2c4.com/wireguard/windows/driver"
 )
 
 const (
@@ -113,10 +114,18 @@ func tunnelConnect() string {
 	if err != nil {
 		return err.Error()
 	}
+	// SERVICE_SID_TYPE_UNRESTRICTED is required: the engine's firewall setup
+	// (tunnel/firewall/helpers.go getCurrentProcessSecurityDescriptor) scans the
+	// process token for the per-service NT SERVICE SID and exits with
+	// ERROR_NO_SUCH_GROUP (1319, "The specified group does not exist") when the
+	// SCM didn't add one. Mirrors upstream manager/install.go InstallTunnel.
 	s, err := m.CreateService(tunnelSvcName, exe, mgr.Config{
+		ServiceType:  windows.SERVICE_WIN32_OWN_PROCESS,
 		StartType:    mgr.StartAutomatic,
+		ErrorControl: mgr.ErrorNormal,
 		DisplayName:  "Hetri VPN Tunnel: " + tunnelName,
-		Dependencies: []string{"Nsi"},
+		Dependencies: []string{"Nsi", "TcpIp"},
+		SidType:      windows.SERVICE_SID_TYPE_UNRESTRICTED,
 	}, "/tunnelservice", machineConfPath())
 	if err != nil {
 		return err.Error()
