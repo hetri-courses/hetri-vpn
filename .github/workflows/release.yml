@@ -32,6 +32,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/bin/hetri-vpn.exe
             build/bin/hetri-vpn-amd64-installer.exe
           generate_release_notes: true
