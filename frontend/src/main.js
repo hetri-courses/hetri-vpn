@@ -1,5 +1,5 @@
 import './style.css';
-import {Connect, Disconnect, GetStatus, SetMode} from '../wailsjs/go/main/App';
+import {Connect, Disconnect, EnableService, GetStatus, SetMode} from '../wailsjs/go/main/App';
 
 const power = document.getElementById('power');
 const stateWord = document.getElementById('state-word');
@@ -12,6 +12,7 @@ const usEndpoint = document.getElementById('us-endpoint');
 const modeFull = document.getElementById('mode-full');
 const modeSplit = document.getElementById('mode-split');
 const toast = document.getElementById('toast');
+const svcBtn = document.getElementById('svc-btn');
 
 let busy = false;
 let connected = false;
@@ -63,7 +64,8 @@ function render(s) {
   if (s.endpoint) usEndpoint.textContent = s.endpoint.replace(/:.*/, '');
   modeFull.classList.toggle('sel', s.mode === 'full');
   modeSplit.classList.toggle('sel', s.mode === 'split');
-  if (!s.hasConfig) showError('No tunnel config found.');
+  svcBtn.classList.toggle('hidden', s.serviceInstalled);
+  if (!s.hasConfig && s.serviceInstalled) showError('No tunnel config found.');
 }
 
 async function refresh() {
@@ -105,6 +107,23 @@ async function switchMode(mode) {
 }
 modeFull.addEventListener('click', () => switchMode('full'));
 modeSplit.addEventListener('click', () => switchMode('split'));
+
+svcBtn.addEventListener('click', async () => {
+  svcBtn.disabled = true;
+  svcBtn.textContent = 'Waiting for approval…';
+  showError(await EnableService());
+  // Poll until the service pipe appears (UAC consent + service start).
+  let tries = 0;
+  const wait = setInterval(async () => {
+    const s = await GetStatus();
+    if (s.serviceInstalled || ++tries > 30) {
+      clearInterval(wait);
+      svcBtn.disabled = false;
+      svcBtn.textContent = 'Enable background service';
+      render(s);
+    }
+  }, 1000);
+});
 
 refresh();
 setInterval(refresh, 2000);

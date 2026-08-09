@@ -2,213 +2,118 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const (
-	tunnelName = "paw-us"
-	wgDir      = `C:\Program Files\WireGuard`
-	fullCIDR   = "0.0.0.0/0"
-	splitCIDR  = "10.100.0.0/24"
-)
-
-// App struct
+// App is the Wails binding surface for the UI. All privileged work goes
+// through the manager service pipe; a direct fallback exists only when the
+// process itself is elevated (dev convenience, pre-service parity).
 type App struct {
-	ctx        context.Context
-	mu         sync.Mutex
-	cachedIP   string
-	ipFetched  time.Time
-	confDirMem string
+	ctx       context.Context
+	mu        sync.Mutex
+	cachedIP  string
+	ipFetched time.Time
 }
 
-// NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.ensureConfig()
+	go startTray(a)
 }
 
-// Status is the single payload the UI polls.
-type Status struct {
-	Connected    bool   `json:"connected"`
-	Tunnel       string `json:"tunnel"`
-	Endpoint     string `json:"endpoint"`
-	HandshakeAge int64  `json:"handshakeAge"` // seconds since last handshake, -1 if none
-	RxBytes      int64  `json:"rxBytes"`
-	TxBytes      int64  `json:"txBytes"`
-	PublicIP     string `json:"publicIP"`
-	Mode         string `json:"mode"` // "full" | "split"
-	HasConfig    bool   `json:"hasConfig"`
-	Error        string `json:"error,omitempty"`
+// ShowWindow is used by the tray to unhide the app.
+func (a *App) ShowWindow() {
+	runtime.WindowShow(a.ctx)
 }
 
-func (a *App) confDir() string {
-	if a.confDirMem != "" {
-		return a.confDirMem
-	}
-	appData := os.Getenv("APPDATA")
-	if appData == "" {
-		home, _ := os.UserHomeDir()
-		appData = filepath.Join(home, "AppData", "Roaming")
-	}
-	a.confDirMem = filepath.Join(appData, "HetriVPN")
-	return a.confDirMem
+func (a *App) QuitApp() {
+	runtime.Quit(a.ctx)
 }
 
-func (a *App) confPath() string {
-	return filepath.Join(a.confDir(), tunnelName+".conf")
-}
-
-// ensureConfig adopts an existing hand-made config on first run.
-func (a *App) ensureConfig() {
-	if _, err := os.Stat(a.confPath()); err == nil {
-		return
-	}
-	_ = os.MkdirAll(a.confDir(), 0o700)
-	home, _ := os.UserHomeDir()
-	seed := filepath.Join(home, "wireguard", "paw-us.conf")
-	if data, err := os.ReadFile(seed); err == nil {
-		_ = os.WriteFile(a.confPath(), data, 0o600)
-	}
-}
-
-func hidden(cmd *exec.Cmd) *exec.Cmd {
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	return cmd
-}
-
-func (a *App) wg(args ...string) (string, error) {
-	cmd := hidden(exec.Command(filepath.Join(wgDir, "wg.exe"), args...))
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
-}
-
-func (a *App) wireguard(args ...string) (string, error) {
-	cmd := hidden(exec.Command(filepath.Join(wgDir, "wireguard.exe"), args...))
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
-}
-
-// Connect installs the tunnel service (requires the app to run elevated).
 func (a *App) Connect() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if _, err := os.Stat(a.confPath()); err != nil {
-		return "No tunnel config found. Restore " + a.confPath()
+	if reply, err := pipeCall("connect", ""); err == nil {
+		a.invalidateIP()
+		return reply.Error
 	}
-	out, err := a.wireguard("/installtunnelservice", a.confPath())
-	if err != nil {
-		return friendlyErr(out, err)
+	if isElevated() {
+		defer a.invalidateIP()
+		return tunnelConnect()
 	}
-	a.invalidateIP()
-	return ""
+	return "Background service is not running. Enable it below."
 }
 
-// Disconnect removes the tunnel service.
 func (a *App) Disconnect() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out, err := a.wireguard("/uninstalltunnelservice", tunnelName)
-	if err != nil {
-		return friendlyErr(out, err)
+	if reply, err := pipeCall("disconnect", ""); err == nil {
+		a.invalidateIP()
+		return reply.Error
 	}
-	a.invalidateIP()
-	return ""
+	if isElevated() {
+		defer a.invalidateIP()
+		return tunnelDisconnect()
+	}
+	return "Background service is not running. Enable it below."
 }
 
-// SetMode switches AllowedIPs between full and split tunnel. If the tunnel
-// is up it is reinstalled so the change applies immediately.
 func (a *App) SetMode(mode string) string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	target := fullCIDR
-	if mode == "split" {
-		target = splitCIDR
+	if reply, err := pipeCall("setmode", mode); err == nil {
+		a.invalidateIP()
+		return reply.Error
 	}
-	data, err := os.ReadFile(a.confPath())
-	if err != nil {
-		return "Config not found"
+	if isElevated() {
+		defer a.invalidateIP()
+		return tunnelSetMode(mode)
 	}
-	re := regexp.MustCompile(`(?m)^AllowedIPs\s*=.*$`)
-	updated := re.ReplaceAllString(string(data), "AllowedIPs = "+target)
-	if err := os.WriteFile(a.confPath(), []byte(updated), 0o600); err != nil {
-		return "Could not write config: " + err.Error()
-	}
-	if a.isUp() {
-		if out, err := a.wireguard("/uninstalltunnelservice", tunnelName); err != nil {
-			return friendlyErr(out, err)
-		}
-		// The service takes a moment to release the adapter.
-		for i := 0; i < 20 && a.isUp(); i++ {
-			time.Sleep(250 * time.Millisecond)
-		}
-		if out, err := a.wireguard("/installtunnelservice", a.confPath()); err != nil {
-			return friendlyErr(out, err)
-		}
-	}
-	a.invalidateIP()
-	return ""
+	return "Background service is not running. Enable it below."
 }
 
-func (a *App) isUp() bool {
-	_, err := a.wg("show", tunnelName)
-	return err == nil
-}
-
-// GetStatus returns the current tunnel state for the UI poll loop.
-func (a *App) GetStatus() Status {
-	s := Status{Tunnel: tunnelName, HandshakeAge: -1, Mode: "full"}
-
-	if data, err := os.ReadFile(a.confPath()); err == nil {
-		s.HasConfig = true
-		conf := string(data)
-		if strings.Contains(conf, "AllowedIPs = "+splitCIDR) {
-			s.Mode = "split"
-		}
-		if m := regexp.MustCompile(`(?m)^Endpoint\s*=\s*(.+)$`).FindStringSubmatch(conf); m != nil {
-			s.Endpoint = strings.TrimSpace(m[1])
+func (a *App) GetStatus() TunnelStatus {
+	var s TunnelStatus
+	if reply, err := pipeCall("status", ""); err == nil && reply.Status != nil {
+		s = *reply.Status
+	} else {
+		s = tunnelStatus()
+		s.ServiceInstalled = false
+		if isElevated() {
+			// Direct mode works while elevated; report it as available.
+			s.ServiceInstalled = true
 		}
 	}
-
-	dump, err := a.wg("show", tunnelName, "dump")
-	if err == nil {
-		s.Connected = true
-		// dump: first line = interface, subsequent lines = peers:
-		// pubkey psk endpoint allowed-ips latest-handshake rx tx keepalive
-		lines := strings.Split(dump, "\n")
-		if len(lines) > 1 {
-			fields := strings.Fields(lines[1])
-			if len(fields) >= 7 {
-				if hs, err := strconv.ParseInt(fields[4], 10, 64); err == nil && hs > 0 {
-					s.HandshakeAge = time.Now().Unix() - hs
-				}
-				s.RxBytes, _ = strconv.ParseInt(fields[5], 10, 64)
-				s.TxBytes, _ = strconv.ParseInt(fields[6], 10, 64)
-			}
-		}
-	}
-
 	s.PublicIP = a.publicIP()
 	return s
 }
 
+// EnableService triggers the one-time elevated self-install of the manager
+// service. Returns immediately; the UI polls until the pipe appears.
+func (a *App) EnableService() string {
+	if serviceReachable() {
+		return ""
+	}
+	if isElevated() {
+		return copyFileErr(installService())
+	}
+	if err := relaunchElevated("/install-service"); err != nil {
+		if strings.Contains(err.Error(), "cancelled") || strings.Contains(err.Error(), "canceled") {
+			return "Elevation was declined."
+		}
+		return err.Error()
+	}
+	return ""
+}
+
 func (a *App) invalidateIP() {
+	a.mu.Lock()
 	a.cachedIP = ""
 	a.ipFetched = time.Time{}
+	a.mu.Unlock()
 }
 
 func (a *App) publicIP() string {
@@ -234,14 +139,4 @@ func (a *App) publicIP() string {
 	a.ipFetched = time.Now()
 	a.mu.Unlock()
 	return ip
-}
-
-func friendlyErr(out string, err error) string {
-	if strings.Contains(out, "Access is denied") || strings.Contains(err.Error(), "Access is denied") {
-		return "Hetri VPN needs to run as administrator to manage the tunnel."
-	}
-	if out != "" {
-		return out
-	}
-	return fmt.Sprintf("%v", err)
 }
