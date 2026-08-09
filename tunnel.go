@@ -19,8 +19,12 @@ const (
 	splitCIDR  = "10.100.0.0/24"
 	pipeName   = `\\.\pipe\HetriVPN`
 	svcName    = "HetriVPNManager"
-	// Fixed by the embedded engine: tunnel.Run self-registers under this name.
-	tunnelSvcName = "WireGuardTunnel$" + tunnelName
+	// Our own service name. The embedded engine passes its internal
+	// "WireGuardTunnel$..." name to the SCM dispatcher, but Windows ignores
+	// that string for own-process services, so the registered name is ours.
+	tunnelSvcName = "HetriVPNTunnel$" + tunnelName
+	// Name used by older installs and the official client; cleaned up on connect.
+	legacyTunnelSvcName = "WireGuardTunnel$" + tunnelName
 	// Windows FILETIME epoch (1601) to Unix epoch offset, in 100ns units.
 	filetimeToUnix = 116444736000000000
 )
@@ -78,6 +82,21 @@ func tunnelConnect() string {
 		return err.Error()
 	}
 	defer m.Disconnect()
+
+	// Remove a legacy-named tunnel service left by older installs so two
+	// services never fight over the same adapter.
+	if legacy, err := m.OpenService(legacyTunnelSvcName); err == nil {
+		_, _ = legacy.Control(svc.Stop)
+		for i := 0; i < 40; i++ {
+			st, err := legacy.Query()
+			if err != nil || st.State == svc.Stopped {
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		_ = legacy.Delete()
+		legacy.Close()
+	}
 
 	if s, err := m.OpenService(tunnelSvcName); err == nil {
 		defer s.Close()
