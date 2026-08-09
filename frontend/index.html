@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hetri VPN</title>
+</head>
+<body>
+  <div id="app">
+    <header class="brand">
+      <img src="./src/assets/hetri_logo.png" alt="Hetri" class="wordmark" draggable="false" />
+      <span class="vpn-tag">VPN</span>
+    </header>
+
+    <main class="stage">
+      <button id="power" class="power" aria-label="Connect">
+        <svg viewBox="0 0 100 100" class="paw" aria-hidden="true">
+          <ellipse cx="30" cy="32" rx="10" ry="13" />
+          <ellipse cx="50" cy="26" rx="10" ry="13" />
+          <ellipse cx="70" cy="32" rx="10" ry="13" />
+          <ellipse cx="16" cy="52" rx="8.5" ry="11" />
+          <ellipse cx="84" cy="52" rx="8.5" ry="11" />
+          <path d="M50 48 C66 48 80 60 80 73 C80 84 71 90 61 87 C56 85.5 53 84.5 50 84.5 C47 84.5 44 85.5 39 87 C29 90 20 84 20 73 C20 60 34 48 50 48 Z" />
+        </svg>
+        <span class="ring"></span>
+      </button>
+      <div id="state-word" class="state-word">&hellip;</div>
+
+      <div class="stats">
+        <div class="stat" title="Public IP">
+          <svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span id="stat-ip">&mdash;</span>
+        </div>
+        <div class="stat" title="Last handshake">
+          <span id="hs-dot" class="dot"></span>
+          <span id="stat-hs">&mdash;</span>
+        </div>
+        <div class="stat" title="Received / sent">
+          <svg viewBox="0 0 24 24" class="ic"><path d="M8 4v12M8 16l-4-4M8 16l4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 20V8M16 8l-4 4M16 8l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="stat-tx">&mdash;</span>
+        </div>
+      </div>
+    </main>
+
+    <section class="servers">
+      <div class="server active" id="server-us">
+        <span class="flag">&#127482;&#127480;</span>
+        <div class="server-meta">
+          <div class="server-name">San Francisco</div>
+          <div class="server-sub" id="us-endpoint">64.23.130.235</div>
+        </div>
+        <span class="server-badge" id="us-badge"></span>
+      </div>
+      <div class="server disabled" id="server-ams">
+        <span class="flag">&#127475;&#127473;</span>
+        <div class="server-meta">
+          <div class="server-name">Amsterdam</div>
+          <div class="server-sub">Soon</div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="mode">
+      <button id="mode-full" class="mode-btn" title="Route all traffic through the VPN">
+        <svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+        <span>Everything</span>
+      </button>
+      <button id="mode-split" class="mode-btn" title="Only droplet traffic uses the VPN">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M4 20V10l8-6 8 6v10h-6v-6h-4v6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        <span>VPN only</span>
+      </button>
+    </footer>
+
+    <div id="toast" class="toast"></div>
+  </div>
+  <script src="./src/main.js" type="module"></script>
+</body>
+</html>
