@@ -102,11 +102,19 @@ Section
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
+    # Register the auto-start manager service inside this elevated install,
+    # so first launch (and every launch) is promptless — WireGuard-style.
+    ExecWait '"$INSTDIR\${PRODUCT_EXECUTABLE}" /install-service'
+
     !insertmacro wails.writeUninstaller
 SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
+
+    # Take the tunnel down, remove the manager service, close the app.
+    ExecWait '"$INSTDIR\${PRODUCT_EXECUTABLE}" /uninstall-service'
+    nsExec::ExecToLog 'taskkill /f /im ${PRODUCT_EXECUTABLE}'
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 

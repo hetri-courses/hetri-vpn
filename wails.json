@@ -9,5 +9,12 @@
   "author": {
     "name": "hetri-courses",
     "email": "owner@hetri.org"
+  },
+  "info": {
+    "companyName": "Hetri Inc",
+    "productName": "Hetri VPN",
+    "productVersion": "0.2.0",
+    "copyright": "Copyright 2026 Hetri Inc",
+    "comments": "Hetri VPN, powered by WireGuard"
   }
 }

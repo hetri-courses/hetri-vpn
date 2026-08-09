@@ -103,6 +103,11 @@ func installService() error {
 }
 
 func uninstallService() error {
+	// Take the tunnel down first so no orphaned WireGuardTunnel$ service
+	// keeps routing traffic after the app is gone.
+	if tunnelIsUp() {
+		_ = tunnelDisconnect()
+	}
 	m, err := mgr.Connect()
 	if err != nil {
 		return err
