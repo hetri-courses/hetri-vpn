@@ -6,13 +6,21 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc/mgr"
 )
+
+// hiddenCmd suppresses the console window when shelling out to sc.exe etc.
+func hiddenCmd(cmd *exec.Cmd) *exec.Cmd {
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	return cmd
+}
 
 func pipeCall(cmd, arg string) (*pipeReply, error) {
 	timeout := 2 * time.Second
@@ -83,22 +91,30 @@ func installService() error {
 	}
 	defer m.Disconnect()
 
-	if s, err := m.OpenService(svcName); err == nil {
-		// Already installed; make sure it is running.
-		defer s.Close()
-		_ = s.Start()
-		return nil
-	}
-
-	s, err := m.CreateService(svcName, exe, mgr.Config{
-		StartType:   mgr.StartAutomatic,
-		DisplayName: "Hetri VPN Manager",
-		Description: "Runs WireGuard tunnel operations for the Hetri VPN app.",
-	}, "/service")
-	if err != nil {
-		return err
+	var s *mgr.Service
+	if s, err = m.OpenService(svcName); err == nil {
+		// Upgrade path: enforce current config on the existing service.
+		if cfg, err := s.Config(); err == nil {
+			cfg.StartType = mgr.StartManual
+			cfg.BinaryPathName = `"` + exe + `" /service`
+			_ = s.UpdateConfig(cfg)
+		}
+	} else {
+		s, err = m.CreateService(svcName, exe, mgr.Config{
+			StartType:   mgr.StartManual,
+			DisplayName: "Hetri VPN Manager",
+			Description: "Runs tunnel operations for the Hetri VPN app while it is open.",
+		}, "/service")
+		if err != nil {
+			return err
+		}
 	}
 	defer s.Close()
+	// Let interactive users start/stop the manager without elevation, so the
+	// UI can run it only while the app is open (no resident processes, no
+	// per-launch UAC).
+	_ = hiddenCmd(exec.Command("sc.exe", "sdset", svcName,
+		"D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)")).Run()
 	return s.Start()
 }
 

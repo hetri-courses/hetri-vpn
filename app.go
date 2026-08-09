@@ -4,11 +4,10 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App is the Wails binding surface for the UI. All privileged work goes
@@ -27,16 +26,15 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	go startTray(a)
+	// Manual-start manager: bring it up for this app session (service ACL
+	// grants interactive users start/stop, so no elevation).
+	go func() { _ = hiddenCmd(exec.Command("sc.exe", "start", svcName)).Run() }()
 }
 
-// ShowWindow is used by the tray to unhide the app.
-func (a *App) ShowWindow() {
-	runtime.WindowShow(a.ctx)
-}
-
-func (a *App) QuitApp() {
-	runtime.Quit(a.ctx)
+// shutdown stops the manager so no Hetri processes outlive the window.
+// The tunnel service (the connection itself) is deliberately untouched.
+func (a *App) shutdown(ctx context.Context) {
+	_ = hiddenCmd(exec.Command("sc.exe", "stop", svcName)).Run()
 }
 
 func (a *App) Connect() string {
@@ -96,6 +94,15 @@ func (a *App) GetStatus() TunnelStatus {
 func (a *App) EnableService() string {
 	if serviceReachable() {
 		return ""
+	}
+	// Installed but stopped? A plain start needs no elevation thanks to the
+	// service ACL set at install time.
+	_ = hiddenCmd(exec.Command("sc.exe", "start", svcName)).Run()
+	for i := 0; i < 12; i++ {
+		if serviceReachable() {
+			return ""
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 	if isElevated() {
 		return copyFileErr(installService())

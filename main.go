@@ -60,7 +60,7 @@ func main() {
 		},
 		BackgroundColour:   &options.RGBA{R: 18, G: 26, B: 21, A: 1},
 		OnStartup:          app.startup,
-		HideWindowOnClose:  true,
+		OnShutdown:         app.shutdown,
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "hetri-vpn-2f6a"},
 		Bind: []interface{}{
 			app,
