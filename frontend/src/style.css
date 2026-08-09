@@ -1,3 +1,10 @@
+@font-face {
+  font-family: "Syne Mono";
+  src: url("./assets/fonts/SyneMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: block;
+}
+
 :root {
   --ground: #121a15;
   --panel: #1a2620;
@@ -14,7 +21,7 @@ html, body { height: 100%; }
 body {
   background: radial-gradient(120% 90% at 50% 0%, #1a2822 0%, var(--ground) 60%);
   color: var(--ink);
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: "Syne Mono", "Courier New", monospace;
   overflow: hidden;
 }
 #app {
