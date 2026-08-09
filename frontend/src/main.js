@@ -108,7 +108,9 @@ async function switchMode(mode) {
 modeFull.addEventListener('click', () => switchMode('full'));
 modeSplit.addEventListener('click', () => switchMode('split'));
 
-svcBtn.addEventListener('click', async () => {
+let svcSetupTried = false;
+
+async function setupService() {
   svcBtn.disabled = true;
   svcBtn.textContent = 'Waiting for approval…';
   showError(await EnableService());
@@ -123,7 +125,23 @@ svcBtn.addEventListener('click', async () => {
       render(s);
     }
   }, 1000);
-});
+}
+
+svcBtn.addEventListener('click', setupService);
+
+// First-launch parity with the original app: if the manager service is
+// missing, trigger the one-time elevated setup immediately instead of
+// waiting for a button press. The button stays as the retry path if the
+// UAC consent is declined.
+async function firstRun() {
+  const s = await GetStatus();
+  render(s);
+  if (!s.serviceInstalled && !svcSetupTried) {
+    svcSetupTried = true;
+    setupService();
+  }
+}
+firstRun();
 
 refresh();
 setInterval(refresh, 2000);
