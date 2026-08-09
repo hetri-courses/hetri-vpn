@@ -33,11 +33,12 @@ body {
   color: var(--sage); transform: translateY(-2px);
 }
 
-.stage { display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 18px; flex: 1; }
+.stage { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 6px; flex: 1; min-height: 0; }
 
 .power {
   position: relative;
-  width: 168px; height: 168px;
+  width: 150px; height: 150px;
+  flex-shrink: 0;
   border-radius: 50%;
   border: none;
   cursor: pointer;
@@ -123,7 +124,8 @@ body {
 .mode-btn:focus-visible { outline: 2px solid var(--sage-bright); outline-offset: -3px; }
 
 .svc-btn {
-  margin-top: 10px;
+  margin-top: 8px;
+  flex-shrink: 0;
   background: rgba(120,161,138,0.14);
   border: 1px dashed var(--sage);
   color: var(--cream);

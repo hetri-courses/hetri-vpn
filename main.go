@@ -42,11 +42,11 @@ func main() {
 	err := wails.Run(&options.App{
 		Title:     "Hetri VPN",
 		Width:     420,
-		Height:    680,
+		Height:    724,
 		MinWidth:  380,
-		MinHeight: 620,
+		MinHeight: 660,
 		MaxWidth:  520,
-		MaxHeight: 820,
+		MaxHeight: 880,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
