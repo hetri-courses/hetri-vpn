@@ -104,6 +104,15 @@ func tunnelConnect() string {
 		if st, err := s.Query(); err == nil && st.State == svc.Running {
 			return ""
 		}
+		// Heal services registered by older builds without the unrestricted
+		// service SID (see comment on CreateService below); without it the
+		// engine exits with ERROR_NO_SUCH_GROUP before the tunnel comes up.
+		if cfg, err := s.Config(); err == nil && cfg.SidType != windows.SERVICE_SID_TYPE_UNRESTRICTED {
+			cfg.SidType = windows.SERVICE_SID_TYPE_UNRESTRICTED
+			if err := s.UpdateConfig(cfg); err != nil {
+				return err.Error()
+			}
+		}
 		if err := s.Start(); err != nil {
 			return err.Error()
 		}
