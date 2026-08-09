@@ -23,7 +23,9 @@ jobs:
           node-version: "22"
 
       - name: Install NSIS
-        run: choco install nsis -y --no-progress
+        run: |
+          choco install nsis -y --no-progress
+          echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0

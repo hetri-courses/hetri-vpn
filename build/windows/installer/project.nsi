@@ -90,11 +90,22 @@ FunctionEnd
 Section
     !insertmacro wails.setShellContext
 
+    # Upgrades: stop the manager service and close a running UI so the exe
+    # in Program Files is not locked while we overwrite it. The service is
+    # re-registered and restarted by /install-service below.
+    nsExec::ExecToLog 'sc stop HetriVPNManager'
+    nsExec::ExecToLog 'taskkill /f /im ${PRODUCT_EXECUTABLE}'
+    Sleep 800
+
     !insertmacro wails.webview2runtime
 
     SetOutPath $INSTDIR
 
     !insertmacro wails.files
+
+    # Embedded engine driver (signed WireGuardNT) + its license.
+    File "..\redist\wireguard.dll"
+    File "..\redist\wireguard-nt-LICENSE.txt"
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"

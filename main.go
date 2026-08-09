@@ -9,6 +9,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"golang.zx2c4.com/wireguard/windows/tunnel"
 )
 
 //go:embed all:frontend/dist
@@ -21,6 +22,13 @@ func main() {
 		switch os.Args[1] {
 		case "/service":
 			runService()
+			return
+		case "/tunnelservice":
+			// Embedded engine: this process IS the tunnel, running as the
+			// WireGuardTunnel$<name> service the manager registered.
+			if len(os.Args) > 2 {
+				_ = tunnel.Run(os.Args[2])
+			}
 			return
 		case "/install-service":
 			if err := installService(); err != nil {

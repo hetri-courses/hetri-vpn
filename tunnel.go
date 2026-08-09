@@ -2,26 +2,29 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"golang.zx2c4.com/wireguard/windows/driver"
+	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
 )
 
 const (
 	tunnelName = "paw-us"
-	wgDir      = `C:\Program Files\WireGuard`
 	fullCIDR   = "0.0.0.0/0"
 	splitCIDR  = "10.100.0.0/24"
 	pipeName   = `\\.\pipe\HetriVPN`
 	svcName    = "HetriVPNManager"
+	// Fixed by the embedded engine: tunnel.Run self-registers under this name.
+	tunnelSvcName = "WireGuardTunnel$" + tunnelName
+	// Windows FILETIME epoch (1601) to Unix epoch offset, in 100ns units.
+	filetimeToUnix = 116444736000000000
 )
 
-// machineConfDir is the service-owned config location, readable regardless
-// of which user session asks (the service runs as SYSTEM).
 func machineConfDir() string {
 	pd := os.Getenv("ProgramData")
 	if pd == "" {
@@ -49,41 +52,84 @@ type TunnelStatus struct {
 	Error            string `json:"error,omitempty"`
 }
 
-func hiddenCmd(cmd *exec.Cmd) *exec.Cmd {
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	return cmd
-}
-
-func runWG(args ...string) (string, error) {
-	cmd := hiddenCmd(exec.Command(filepath.Join(wgDir, "wg.exe"), args...))
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
-}
-
-func runWireGuard(args ...string) (string, error) {
-	cmd := hiddenCmd(exec.Command(filepath.Join(wgDir, "wireguard.exe"), args...))
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
-}
-
 func tunnelIsUp() bool {
-	_, err := runWG("show", tunnelName)
-	return err == nil
+	m, err := mgr.Connect()
+	if err != nil {
+		return false
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(tunnelSvcName)
+	if err != nil {
+		return false
+	}
+	defer s.Close()
+	st, err := s.Query()
+	return err == nil && st.State == svc.Running
 }
 
+// tunnelConnect registers (if needed) and starts the tunnel service, which
+// is this same binary running the embedded engine via /tunnelservice.
 func tunnelConnect() string {
 	if _, err := os.Stat(machineConfPath()); err != nil {
 		return "No tunnel config at " + machineConfPath()
 	}
-	if out, err := runWireGuard("/installtunnelservice", machineConfPath()); err != nil {
-		return errText(out, err)
+	m, err := mgr.Connect()
+	if err != nil {
+		return err.Error()
+	}
+	defer m.Disconnect()
+
+	if s, err := m.OpenService(tunnelSvcName); err == nil {
+		defer s.Close()
+		if st, err := s.Query(); err == nil && st.State == svc.Running {
+			return ""
+		}
+		if err := s.Start(); err != nil {
+			return err.Error()
+		}
+		return ""
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return err.Error()
+	}
+	s, err := m.CreateService(tunnelSvcName, exe, mgr.Config{
+		StartType:    mgr.StartAutomatic,
+		DisplayName:  "Hetri VPN Tunnel: " + tunnelName,
+		Dependencies: []string{"Nsi"},
+	}, "/tunnelservice", machineConfPath())
+	if err != nil {
+		return err.Error()
+	}
+	defer s.Close()
+	if err := s.Start(); err != nil {
+		return err.Error()
 	}
 	return ""
 }
 
 func tunnelDisconnect() string {
-	if out, err := runWireGuard("/uninstalltunnelservice", tunnelName); err != nil {
-		return errText(out, err)
+	m, err := mgr.Connect()
+	if err != nil {
+		return err.Error()
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(tunnelSvcName)
+	if err != nil {
+		return "" // nothing to disconnect
+	}
+	defer s.Close()
+	_, _ = s.Control(svc.Stop)
+	for i := 0; i < 40; i++ {
+		st, err := s.Query()
+		if err != nil || st.State == svc.Stopped {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if err := s.Delete(); err != nil && !strings.Contains(err.Error(), "marked for deletion") {
+		return err.Error()
 	}
 	return ""
 }
@@ -103,14 +149,11 @@ func tunnelSetMode(mode string) string {
 		return "Could not write config: " + err.Error()
 	}
 	if tunnelIsUp() {
-		if out, err := runWireGuard("/uninstalltunnelservice", tunnelName); err != nil {
-			return errText(out, err)
+		if msg := tunnelDisconnect(); msg != "" {
+			return msg
 		}
-		for i := 0; i < 20 && tunnelIsUp(); i++ {
-			time.Sleep(250 * time.Millisecond)
-		}
-		if out, err := runWireGuard("/installtunnelservice", machineConfPath()); err != nil {
-			return errText(out, err)
+		if msg := tunnelConnect(); msg != "" {
+			return msg
 		}
 	}
 	return ""
@@ -130,27 +173,33 @@ func tunnelStatus() TunnelStatus {
 		}
 	}
 
-	dump, err := runWG("show", tunnelName, "dump")
-	if err == nil {
-		s.Connected = true
-		lines := strings.Split(dump, "\n")
-		if len(lines) > 1 {
-			fields := strings.Fields(lines[1])
-			if len(fields) >= 7 {
-				if hs, err := strconv.ParseInt(fields[4], 10, 64); err == nil && hs > 0 {
-					s.HandshakeAge = time.Now().Unix() - hs
-				}
-				s.RxBytes, _ = strconv.ParseInt(fields[5], 10, 64)
-				s.TxBytes, _ = strconv.ParseInt(fields[6], 10, 64)
-			}
+	adapter, err := driver.OpenAdapter(tunnelName)
+	if err != nil {
+		return s
+	}
+	defer adapter.Close()
+	cfg, err := adapter.Configuration()
+	if err != nil {
+		return s
+	}
+	s.Connected = true
+	if peer := cfg.FirstPeer(); peer != nil {
+		if peer.LastHandshake > 0 {
+			unix := (int64(peer.LastHandshake) - filetimeToUnix) / 10_000_000
+			s.HandshakeAge = time.Now().Unix() - unix
 		}
+		s.RxBytes = int64(peer.RxBytes)
+		s.TxBytes = int64(peer.TxBytes)
 	}
 	return s
 }
 
+// errText kept for pipe/client call sites.
 func errText(out string, err error) string {
 	if out != "" {
 		return out
 	}
 	return err.Error()
 }
+
+var _ = strconv.Itoa // retained import guard during refactors
