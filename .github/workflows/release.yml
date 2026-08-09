@@ -22,15 +22,23 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
 
       - name: Build app + installer
         run: wails build -nsis
 
+      - name: Verify installer exists
+        shell: bash
+        run: ls -la build/bin/ && test -f build/bin/hetri-vpn-amd64-installer.exe
+
       - name: Attach artifacts to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             build/bin/hetri-vpn-amd64-installer.exe
+          fail_on_unmatched_files: true
           generate_release_notes: true
